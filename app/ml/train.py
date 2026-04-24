@@ -20,7 +20,9 @@ LABEL_NAMES = {v: k for k, v in LABELS.items()}
 MODEL_DIR = Path(__file__).parent / "model"
 
 
-def generate_synthetic_samples(n_per_class: int = 200) -> tuple[list[dict[str, float]], list[int]]:
+def generate_synthetic_samples(
+    n_per_class: int = 300,
+) -> tuple[list[dict[str, float]], list[int]]:
     """Generate synthetic code samples with known quality labels."""
     samples: list[dict[str, float]] = []
     labels: list[int] = []
@@ -70,6 +72,64 @@ def generate_synthetic_samples(n_per_class: int = 200) -> tuple[list[dict[str, f
             \"\"\"Transform a single item.\"\"\"
             return {k: str(v).strip() for k, v in item.items()}
         """),
+        textwrap.dedent("""\
+        from dataclasses import dataclass
+
+
+        @dataclass
+        class Point:
+            \"\"\"Represents a 2D point.\"\"\"
+            x: float
+            y: float
+
+            def distance_to(self, other: 'Point') -> float:
+                \"\"\"Calculate Euclidean distance to another point.\"\"\"
+                return ((self.x - other.x) ** 2 + (self.y - other.y) ** 2) ** 0.5
+
+            def midpoint(self, other: 'Point') -> 'Point':
+                \"\"\"Return the midpoint between two points.\"\"\"
+                return Point((self.x + other.x) / 2, (self.y + other.y) / 2)
+        """),
+        textwrap.dedent("""\
+        from typing import Iterator
+
+
+        def fibonacci(n: int) -> Iterator[int]:
+            \"\"\"Generate the first n Fibonacci numbers.\"\"\"
+            a, b = 0, 1
+            for _ in range(n):
+                yield a
+                a, b = b, a + b
+
+
+        def is_prime(n: int) -> bool:
+            \"\"\"Check if a number is prime.\"\"\"
+            if n < 2:
+                return False
+            for i in range(2, int(n ** 0.5) + 1):
+                if n % i == 0:
+                    return False
+            return True
+        """),
+        textwrap.dedent("""\
+        import json
+        from pathlib import Path
+
+
+        def load_config(path: str) -> dict:
+            \"\"\"Load configuration from a JSON file.\"\"\"
+            config_path = Path(path)
+            if not config_path.exists():
+                raise FileNotFoundError(f"Config not found: {path}")
+            with config_path.open() as f:
+                return json.load(f)
+
+
+        def save_config(path: str, data: dict) -> None:
+            \"\"\"Save configuration to a JSON file.\"\"\"
+            with Path(path).open("w") as f:
+                json.dump(data, f, indent=2)
+        """),
     ]
 
     medium_templates = [
@@ -108,6 +168,34 @@ def generate_synthetic_samples(n_per_class: int = 200) -> tuple[list[dict[str, f
             else:
                 return temp2 - e + f
         """),
+        textwrap.dedent("""\
+        def fetch_data(url, timeout=30, retry=3, headers=None):
+            import requests
+            for i in range(retry):
+                try:
+                    resp = requests.get(url, timeout=timeout, headers=headers)
+                    if resp.status_code == 200:
+                        return resp.json()
+                except Exception:
+                    if i == retry - 1:
+                        raise
+            return None
+        """),
+        textwrap.dedent("""\
+        def validate(data):
+            errors = []
+            if not data.get('name'):
+                errors.append('name required')
+            if not data.get('email'):
+                errors.append('email required')
+            if data.get('age') and data['age'] < 0:
+                errors.append('invalid age')
+            if data.get('age') and data['age'] > 150:
+                errors.append('invalid age')
+            if len(errors) > 0:
+                return False, errors
+            return True, []
+        """),
     ]
 
     bad_templates = [
@@ -143,6 +231,23 @@ def generate_synthetic_samples(n_per_class: int = 200) -> tuple[list[dict[str, f
             Result = pickle.loads(D)
             token = "sk_live_abc123def456"
             return Result
+        """),
+        textwrap.dedent("""\
+        import hashlib
+        def check_pass(p):
+            h = hashlib.md5(p.encode()).hexdigest()
+            db_pass = "5f4dcc3b5aa765d61d8327deb882cf99"
+            if h == db_pass:
+                return True
+            return False
+        """),
+        textwrap.dedent("""\
+        def query_db(table, user_input):
+            import sqlite3
+            conn = sqlite3.connect("app.db")
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT * FROM {table} WHERE name = '{user_input}'")
+            return cursor.fetchall()
         """),
     ]
 
@@ -186,7 +291,7 @@ def train_model(
     save_path: str | None = None,
 ) -> tuple[GradientBoostingClassifier, StandardScaler, dict]:
     """Train the code quality classifier and save artifacts."""
-    samples, labels = generate_synthetic_samples(n_per_class=300)
+    samples, labels = generate_synthetic_samples(n_per_class=400)
 
     names = feature_names()
     feature_matrix = np.array([[s.get(n, 0) for n in names] for s in samples])
@@ -196,12 +301,13 @@ def train_model(
     scaled = scaler.fit_transform(feature_matrix)
 
     model = GradientBoostingClassifier(
-        n_estimators=150,
+        n_estimators=200,
         max_depth=5,
         learning_rate=0.1,
         random_state=42,
         min_samples_split=5,
         min_samples_leaf=3,
+        subsample=0.9,
     )
 
     scores = cross_val_score(model, scaled, target, cv=5, scoring="accuracy")
