@@ -1,5 +1,6 @@
 """ML prediction service for code quality classification."""
 
+import logging
 from pathlib import Path
 
 import joblib
@@ -7,8 +8,11 @@ import numpy as np
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 
+from app.config import settings
 from app.ml.features import extract_features, feature_names
 from app.ml.train import LABEL_NAMES, train_model
+
+logger = logging.getLogger(__name__)
 
 MODEL_DIR = Path(__file__).parent / "model"
 
@@ -26,10 +30,12 @@ class CodeQualityPredictor:
         scaler_path = MODEL_DIR / "scaler.joblib"
 
         if not model_path.exists() or not scaler_path.exists():
+            logger.info("No saved model found — training new model...")
             self._model, self._scaler, _ = train_model(str(MODEL_DIR))
         else:
             self._model = joblib.load(model_path)
             self._scaler = joblib.load(scaler_path)
+            logger.info("ML model loaded from %s", model_path)
 
         self._loaded = True
 
@@ -42,14 +48,15 @@ class CodeQualityPredictor:
                 "quality_label": "good" | "medium" | "bad",
                 "confidence": float (0.0-1.0),
                 "probabilities": {"good": float, "medium": float, "bad": float},
+                "meets_threshold": bool,
                 "score": float (0-10 scale mapped from prediction)
             }
         """
         if not self._loaded:
             self.load()
 
-        assert self._model is not None
-        assert self._scaler is not None
+        if self._model is None or self._scaler is None:
+            raise RuntimeError("ML model not loaded")
 
         features = extract_features(source)
         names = feature_names()
@@ -61,6 +68,7 @@ class CodeQualityPredictor:
 
         label = LABEL_NAMES[prediction]
         confidence = float(np.max(probabilities))
+        meets_threshold = confidence >= settings.ml_confidence_threshold
 
         prob_dict = {LABEL_NAMES[i]: float(p) for i, p in enumerate(probabilities)}
 
@@ -69,10 +77,16 @@ class CodeQualityPredictor:
             score_map[LABEL_NAMES[i]] * p for i, p in enumerate(probabilities)
         )
 
+        logger.debug(
+            "ML prediction: %s (conf=%.3f, threshold_met=%s)",
+            label, confidence, meets_threshold,
+        )
+
         return {
             "quality_label": label,
             "confidence": round(confidence, 3),
             "probabilities": {k: round(v, 3) for k, v in prob_dict.items()},
+            "meets_threshold": meets_threshold,
             "score": round(weighted_score, 1),
         }
 
